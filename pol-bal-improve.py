@@ -1,4 +1,3 @@
-
 import gym
 import numpy as np
 from gym import wrappers
@@ -13,6 +12,7 @@ for i in range(100):
     #No update on policies or application of state-action pairs for improvement
     #Per each random weighting, 100 time-steps to test env; 100 varn of weights; 10 000 total increments
     #Idea is randomly select policy and choose optimal one (albeit mathematically may be sub-optimal, better policies can exist)
+    #Depending on weights, pole params (observations) certain policies will converge to termination (200 steps to right) than others
     newWeights = np.random.uniform(-1.0, 1.0, 4)
     lengthPerEpsIterations = [] #Track time-steps each iteration of pole-bal makes 
     for j in range(100): #iterate eps and update state vals at end
@@ -35,3 +35,18 @@ for i in range(100):
         print('Best Average Episode Length: ', bestEpsLength, ' With Actions on Most Recent Iteration in Episode: ', count)
 print('All episodes: ', allEpsLengths)
 print('Game Lasted: ', count)
+
+#Record best run which will win game 
+done = False
+count = 0
+env = wrappers.Monitor(env, 'MovieFiles2', force=True) #Save mp4 file of run & overwrite if exist
+observation = env.reset()
+
+while not done:
+    count += 1
+    
+    action = 1 if np.dot(observation, optimalWeights) > 0 else 0
+    observation, reward, done, info = env.step(action)
+    if done:
+        break
+print('Game Lasted: ', count, ' With Best Weights ')
