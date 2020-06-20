@@ -1,6 +1,5 @@
 import numpy as np
 import gym
-import matplotlib.pyplot as plt
 
 
 #Apply Q-learning with Epsilon-Greedy strategy to find better policies (paths) via exploration by occasionally choosing non-greedy actions
@@ -32,6 +31,7 @@ def create_bins():
     return bins
 
 #Rather than work with raw numerical obs as done prior, instead work with normalized scale positions to form state 
+#Policy used to define state transitions
 def assign_bins(observations, bins):
     #Map continuous observation quantities, scale down by bin ranges & assign discretized state; bin range must exceed obs range 
     state = np.zeros(4)
@@ -49,6 +49,46 @@ def get_state_as_string(state):
 def get_all_states_as_string():
     states = []
     for i in range(MAXSTATES):
-        states.append(str(i).zfill(4)) #fill each state as a empty four-elem vec ('0000'), store all in init-states array
+        states.append(str(i).zfill(4)) #encode each state using zfill (add trailing zeros make it four-elem num), e.g. str(1).zfill(4) = 0001, str(23).zfill(4) = 0023
     return states
 
+#Create dict of state-reward key/val pairs by relating state->action->reward through dict inside dict 
+def initialize_Q():
+    Q = {}  
+    all_states = get_all_states_as_string()
+    for state in all_states: #per each possible state add set of rewards per possible actions from state; 0 or 1 for cart; thus Q is matrix size: [state] x 2
+        Q[state] = {} #access key for Q by state-string 
+        for action in range(env.action_space.n):
+            Q[state][action] = 0 #each Q[state] also a dictionary containing state-action key/val pairs 
+    return Q
+
+def play_one_game(bins, Q, eps = 0.5):
+    observation = env.reset()
+    done = False
+    count = 0
+    state = get_state_as_string(assign_bins(observation, bins)) #create state-vec per rand obs reset, convert to str
+    total_reward = 0
+    
+    while not done:
+        count += 1
+        #Epsilon set to 0.5 yield random, sub-optimal action 50% of time; select particular action from set of possible actions in current state
+        if np.random.uniform() < eps:
+            action = env.action_space.sample() #randomly go left or right
+        else: #greedy action 
+            action = max_dict(Q[state])[0] #go to state, return action associated with max reward (return either 0 for left, 1 for right and reward per each), from tuple access first elem for specific action
+            
+        observation, reward, done, information = env.step(action)
+        total_reward += reward #reward +1 for each balanced step 
+        
+        if done and count < 200: #if pole-balance terminates before 200 steps, lower value of state-action pairs; max-reward = 200 thus heavily penalize
+            reward = -300
+        
+        next_state = get_state_as_string(assign_bins(observation, bins)) #next state chosen as per bin assignment policy since agent learns from experience; no model or markov decision process exists to define transitions
+        next_state_action, next_state_return = max_dict(Q[next_state]) #return optimal action & associated reward of following state based on observations from current
+        Q[state][action] += ALPHA * (reward + GAMMA * next_state_return - Q[state][action]) #update value of current state based on future discounted returns 
+        state, action = next_state, next_state_action #continue for following time-step until either pole tips over or cart reaches 200 points
+        
+    return total_reward, count 
+
+
+    
