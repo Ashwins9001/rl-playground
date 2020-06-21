@@ -1,10 +1,10 @@
-import numpy as np
-import gym
-
-
 #Apply Q-learning with Epsilon-Greedy strategy to find better policies (paths) via exploration by occasionally choosing non-greedy actions
 #Discount rewards to prioritise recents and apply policy iteration per each added reward as agent samples state-action pairs (rather than episodically as Monte Carlo)
 #Q-learning off-policy therefore behavioral policy formed to estimate optimal target policy
+
+import numpy as np
+import gym
+import matplotlib.pyplot as plt 
 env = gym.make('CartPole-v0')
 
 #Define discount factor gamma (closer to 1 value immediate rewards more) and step size param alpha (scales/normalizes error), set of discrete states for agent
@@ -91,4 +91,33 @@ def play_one_game(bins, Q, eps = 0.5):
     return total_reward, count 
 
 
+def play_many_games(bins, N = 10000):
+    Q = initialize_Q()
+    length = []
+    reward = []
     
+    #reset env to rand state per each episode and iteratively update state-action values & ensure exploring starts to improve efficiency in finding optimal path; run 10000 episodes 
+    for n in range(N):
+        eps = 1.0/np.sqrt(n+1)
+        episode_reward, episode_length = play_one_game(bins, Q, eps)
+        if n % 100 == 0:
+            print(n, '%.4f' % eps, episode_reward) #epsilon dec w/ episodes to ensure addiitonal exploration as state-values converge for optimal path 
+        length.append(episode_length)
+        reward.append(episode_reward)
+    return length, reward 
+
+#plot running average of rewards per episode
+def plot_running_avg(totalrewards):
+    N = len(totalrewards)
+    running_avg = np.empty(N)
+    for t in range(N):
+        running_avg[t] = np.mean(totalrewards[max(0, t - 100):(t+1)])
+    plt.plot(running_avg)
+    plt.title("Running average")
+    plt.show()
+
+    
+if __name__ == '__main__':
+    bins = create_bins()
+    episode_lengths, episode_rewards = play_many_games(bins)
+    plot_running_avg(episode_rewards)
