@@ -61,3 +61,92 @@ stack_size = 4
 
 training = False
 eps_render = False
+
+#Class to define architecture of DNN, no training/learning/init done 
+class DQNetwork:
+    def __init__(self, state_size, action_size, learning_rate, name='DQNetwork'):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.learning_rate = learning_rate
+        
+        with tf.variable_scope(name):
+            self.inputs_ = tf.placeholder(tf.float32, [None, *state_size], name="inputs")
+            self.actions_ = tf.placeholder(tf.float32, [None, self.action_size], name="actions_")
+            
+            #sample episilon-greedy action step into env, observe next states, rewards and provide to DNN upon init
+            #purpose of stepping through env is to gain exp and iteratively train DNN by minimizing loss 
+            #receive set of q-values per actions from DNN, select max and set as target_Q
+            #store experience (reward, action, state, next_state) at time step in replay memory
+            #using experiences, compute target Q-value which is desirable distribution DNN must approximate
+            #iterate to following state
+            #load up experiences and provide as vector of inputs to DNN and compute prediction per each experience
+            #apply loss function that computes error between DNN output and optimal distribution from stored experiences in memory
+            #backpropagate computations to tune weights & repeat; DNN is learning 
+            self.target_Q = tf.placeholder(tf.float32, [None], name="target") 
+            
+            self.conv1 = tf.layers.conv2d(inputs=self.inputs_, 
+                                          filters=32,
+                                          kernel_size=[8,8],
+                                          strides=[4,4],
+                                          padding="VALID",
+                                          kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+                                          name="conv1")
+            self.conv1_out = tf.nn.elu(self.conv1, name="conv1_out")
+            
+            self.conv2 = tf.layers.conv2d(inputs=self.conv1_out, 
+                                          filters=64,
+                                          kernel_size=[4,4],
+                                          strides=[2,2],
+                                          padding="VALID",
+                                          kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+                                          name="conv2")
+            self.conv2_out = tf.nn.elu(self.conv2, name="conv2_out")
+
+            
+            self.conv1 = tf.layers.conv2d(inputs=self.conv2_out, 
+                                          filters=64,
+                                          kernel_size=[3,3],
+                                          strides=[2,2],
+                                          padding="VALID",
+                                          kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+                                          name="conv3")
+            self.conv3_out = tf.nn.elu(self.conv3, name="conv3_out")
+            
+            self.flatten = tf.contrib.layers.flatten(self.conv3_out)
+            
+            self.fc = tf.layers.dense(inputs=self.flatten,
+                                      units=512,
+                                      activation=tf.elu.nn,
+                                      kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                                      name="fc1")
+            
+            self.output = tf.layers.dense(inputs=self.fc,
+                                          kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                                          units=self.action_size,
+                                          activation=None)
+            
+            self.Q = tf.reduce_sum(tf.multiply(self.output, self.actions_)) #predicted Q-value computed by DNN
+            self.loss = tf.reduce_mean(tf.square(self.target_Q - self.Q))
+            
+            self.optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
