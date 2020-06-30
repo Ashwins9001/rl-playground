@@ -11,6 +11,11 @@ import warnings
 env = retro.make(game='SpaceInvaders-Atari2600')
 print("Frame size: ", env.observation_space)
 print("Actions available: ", env.action_space.n)
+possible_actions = np.array(np.identity(env.action_space.n, dtype=int).tolist())
+
+#Preprocessing params
+stack_size = 4
+stacked_frames = deque([np.zeros((110, 84), dtype=np.int) for i in range(stack_size)], maxlen=4) #clear stack 
 
 def preprocess_frame(frame):
     gray = rgb2gray(frame)
@@ -56,8 +61,6 @@ decay_rate = 0.00001 #gamma param extremely low thus agent will value actions ta
 pretrain_length = batch_size #experiences in mem at init
 memory_size = 1000000 #experiences stored in mem to improve convergence time to optimal state-action values
 
-#Preprocessing params
-stack_size = 4
 
 training = False
 eps_render = False
@@ -131,12 +134,42 @@ class DQNetwork:
             self.optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
             
             
+tf.reset_default_graph()
+DQNetwork = DQNetwork(state_size, action_size, learning_rate)
             
+#Apply experience replay to ensure agent correctly behaves to previously trained envs 
+class Memory():
+    def __init__(self, max_size):
+        self.buffer = deque(maxlen = max_size)
+    def add(self, experience):
+        self.buffer.append(experience)
+    def sample(self, batch_size):
+        buffer_size = len(self.buffer)
+        index = np.random.choice(np.arrange(buffer_size),
+                                 size = batch_size,
+                                 replace = False)
+        return [self.buffer[i] for i in index]
             
-            
-            
-            
-            
+#Populate memory by taking rand actions, storing experience (tuple of: state, action, reward, next_state)
+memory = Memory(max_size = memory_size)
+for i in range(pretrain_length):
+    if i == 0: #first step
+        state = env.reset()
+        state, stacked_frames = stack_frames(stacked_frames, state, True)
+    choice = random.randint(1, len(possible_actions)) - 1
+    action = possible_actions[choice]
+    next_state, reward, done, info = env.step(action)
+    next_state, stacked_frames = stack_frames(stacked_frames, next_state, False)
+
+    
+    if done:
+        next_state = np.zeros(state.shape)
+        memory.add((state, action, reward, next_state, done))
+        state = env.reset()
+        state, stacked_frames = stack_frames(stacked_frames, state, True)
+    else:
+        memory.add((state, action, reward, next_state, done))
+        state = next_state
             
             
             
