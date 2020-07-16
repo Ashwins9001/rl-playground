@@ -1,0 +1,5 @@
+meeting updates
+Hayden: got a policy coded in for cartpole, having trouble understanding q-learning, understands policy creation, MDPs; solid start
+TJ: ran through cartpole & frozen lake examples; addressed questions on what we're doing
+Ash: got through cartpole as Hayden, following ML w/ Phil
+Nikhil: where Hayden is, will continue working with q-learning 
