@@ -30,7 +30,9 @@ import weakref
 import math
 import collections
 
-
+test_flag = 0
+saver = tf.train.Saver()
+model_name = "DQNetwork"
 
 state_size = [84, 84, 1]
 # discrete action-space described as (throttle, steer, brake)
@@ -41,8 +43,8 @@ action_size = len(action_space)
 learning_rate= 0.00025
 
 # Training parameters
-total_episodes = 5001  # INTIALLY  5000
-max_steps = 5000
+total_episodes = 300  # INTIALLY  5000
+max_steps = 50
 batch_size = 64
 
 # Fixed Q target hyper parameters
@@ -956,7 +958,6 @@ def training(map, vehicle, sensors):
     writer = tf.summary.FileWriter("summary")
     tf.summary.scalar("Loss", agent.loss)
     write_op = tf.summary.merge_all()
-    saver = tf.train.Saver()
     
     #init memory 
     memory = Memory(max_size = memory_size)
@@ -1032,10 +1033,52 @@ def training(map, vehicle, sensors):
                 writer.add_summary(summary, episode)
                 writer.flush
                 
+                if episode % 5 == 0:
+                    save_path = saver.save(sess, "./models/model.ckpt")
+                    print("Model Saved")
+                
                 print('Episode: {}'.format(episode),
                                   'Total reward: {}'.format(episode_reward),
                                   'Explore P: {:.4f}'.format(explore_probability),
                                 'Training Loss {:.4f}'.format(loss))
+                
+                
+def testing(map, vehicle, sensors):
+    tf.reset_default_graph()
+    with tf.Session() as sess:
+
+        saver.restore(sess, "./models/model.ckpt")
+
+        if saver is None:
+            print("did not load")
+
+        graph = tf.get_default_graph()
+        inputs_ = graph.get_tensor_by_name("DQNetwork" + "/inputs:0")
+        output = graph.get_tensor_by_name("DQNetwork" + "/output:0")
+
+        episode_reward = 0
+        reset_environment(map, vehicle, sensors)
+
+        while True:
+            state = process_image(sensors.camera_queue)
+            Qs = sess.run(output, feed_dict={inputs_: state.reshape((1, *state.shape))})
+            action_int = np.argmax(Qs)
+            #print(Qs)
+            #print(action_int)
+
+            car_controls = map_action(action_int, action_space)
+            vehicle.apply_control(car_controls)
+            reward = compute_reward(vehicle, sensors)
+            episode_reward += reward
+            done = isDone(reward)
+
+            if done:
+                print("EPISODE ended", "TOTAL REWARD {:.4f}".format(episode_reward))
+                reset_environment(map, vehicle, sensors)
+                episode_reward = 0
+
+            else:
+                time.sleep(0.25)
                
                     
 def control_loop(vehicle_id, host, port):
@@ -1049,11 +1092,15 @@ def control_loop(vehicle_id, host, port):
         vehicle = next((x for x in world.get_actors() if x.id == vehicle_id), None) #get the vehicle actor according to its id
         sensors = Sensors(world, vehicle)
         print("beginning training loop")
-        training(map, vehicle, sensors)   
+        if test_flag:
+            testing(map, vehicle, sensors)
+        else:
+            training(map, vehicle, sensors)  
+         
         
     finally:
         print("done")
-        #sensors.destroy_sensors()       
+        sensors.destroy_sensors()       
 
 def render_loop(args):
     #loop responsible for rendering the simulation client
@@ -1076,6 +1123,7 @@ def render_loop(args):
         p.start()
         #control_loop(world.player.id, args.host, args.port)
         clock = pygame.time.Clock()
+        
         
         
         while True:
