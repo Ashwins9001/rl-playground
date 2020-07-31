@@ -29,9 +29,10 @@ import re
 import weakref
 import math
 import collections
+import pickle
+import matplotlib.pyplot as plt 
 
 test_flag = 0
-saver = tf.train.Saver()
 model_name = "DQNetwork"
 
 state_size = [84, 84, 1]
@@ -43,8 +44,8 @@ action_size = len(action_space)
 learning_rate= 0.00025
 
 # Training parameters
-total_episodes = 300  # INTIALLY  5000
-max_steps = 50
+total_episodes = 50  # INTIALLY  5000
+max_steps = 200
 batch_size = 64
 
 # Fixed Q target hyper parameters
@@ -58,9 +59,9 @@ decay_rate = 0.00005  # exponential decay rate for exploration prob
 
 # Q LEARNING hyperparameters
 gamma = 0.95  # Discounting rate
-pretrain_length = 100000  ## Number of experiences stored in the Memory when initialized for the first time --INTIALLY 100k
-memory_size = 100000  # Number of experiences the Memory can keep  --INTIALLY 100k
-
+pretrain_length = 100  ## Number of experiences stored in the Memory when initialized for the first time --INTIALLY 100k
+memory_size = 10000  # Number of experiences the Memory can keep  --INTIALLY 100k
+memory_save_path = "memory.pkl"
 
 
 # ==============================================================================
@@ -795,12 +796,35 @@ class DQNetwork():
 
         return action_int, action, explore_probability
 
+def map_from_control(control, action_space):
+    '''maps continuous control to discrete action values
+    used to convert control from autopilot to discrete values that the Q-network is using
+    It works by computing the discrete action with the smaller euclidian distance from the
+    continuous actions'''
+    control_vector = np.array([control.throttle, control.steer, control.brake])
+    distances = [] # euclidian distance list
+    for control in action_space:
+        distances.append(np.linalg.norm(control-control_vector)) # compute euclidian distance
+        
+    return np.argmin(distances)
+
    
 class Memory():
-    def __init__(self, max_size):
+    def __init__(self, max_size, pretrain_length, action_space):
         self.buffer = deque(maxlen = max_size)
+        self.pretrain_length = pretrain_length
+        self.action_space = action_space
+        self.action_size = len(action_space)
+        self.possible_actions = np.identity(self.action_size, dtype=int).tolist()
+    
     def add(self, experience):
         self.buffer.append(experience)
+        
+    #priority equivalent to TD error plus constant to prevent edge-case when p = 0
+    #rather than use uniform random sampling, can create prob distribution based on priority 
+    #dampen each priority weight to 1 by raising it to priority_scale const (a)
+    #a = [0, 1] where a = 1 is full priority sampling & a = 0 is full random sampling ()            
+    
     def sample(self, batch_size):
         buffer_size = len(self.buffer)
         index = np.random.choice(np.arange(buffer_size),
@@ -808,6 +832,45 @@ class Memory():
                                  replace = True) #originally replace=False
         return [self.buffer[i] for i in index]
     
+    
+    def fill_memory(self, map, vehicle, camera_queue, sensors, autopilot = False):
+        print("Started to fill memory")
+        reset_environment(map, vehicle, sensors)
+
+        vehicle.set_autopilot()
+
+        for i in range(self.pretrain_length):
+
+            if i % 10 == 0:
+                print(i, "experiences stored")
+            state = process_image(camera_queue)
+            control = vehicle.get_control()
+            action_int = map_from_control(control, self.action_space)
+            action = self.possible_actions[action_int]
+           
+            time.sleep(0.25)
+
+            reward = compute_reward(vehicle, sensors)
+            done = isDone(reward)
+            next_state = process_image(camera_queue)
+            experience = state, action, reward, next_state, done
+            self.add(experience)
+
+            if done:
+                reset_environment(map, vehicle, sensors)
+            else:
+                state = next_state
+
+        print('Finished filing memory. %s experiences stored.' % self.pretrain_length)
+        vehicle.set_autopilot(enabled = False)
+
+    def save_memory(self, filename, object):
+        handle = open(filename, "wb")
+        pickle.dump(object, handle)
+
+    def load_memory(self, filename):
+        with open(filename, 'rb') as f:
+            return pickle.load(f)
 
 
 #carla sensors special actors to measure & stream data using listen() method
@@ -948,20 +1011,78 @@ def render(clock, world, display):
     world.render(display)
     pygame.display.flip()
     
+def plotLearning(x, scores, losses, filename, lines=None):
+    fig=plt.figure()
+    ax=fig.add_subplot(111, label="1")
+    ax2=fig.add_subplot(111, label="2", frame_on=False)
+
+    ax.plot(x, losses, color="C0")
+    ax.set_xlabel("Game", color="C0")
+    ax.set_ylabel("Loss", color="C0")
+    ax.tick_params(axis='x', colors="C0")
+    ax.tick_params(axis='y', colors="C0")
+
+    N = len(scores)
+    running_avg = np.empty(N)
+    for t in range(N):
+	    running_avg[t] = np.mean(scores[max(0, t-20):(t+1)])
+
+    ax2.scatter(x, running_avg, color="C1")
+    #ax2.xaxis.tick_top()
+    ax2.axes.get_xaxis().set_visible(False)
+    ax2.yaxis.tick_right()
+    #ax2.set_xlabel('x label 2', color="C1")
+    ax2.set_ylabel('Score', color="C1")
+    #ax2.xaxis.set_label_position('top')
+    ax2.yaxis.set_label_position('right')
+    #ax2.tick_params(axis='x', colors="C1")
+    ax2.tick_params(axis='y', colors="C1")
+    
+
+    if lines is not None:
+        for line in lines:
+            plt.axvline(x=line)
+    plt.draw()
+    print("saving plot")
+    plt.savefig(filename)    
+
+def update_target_graph():
+    # This function helps to copy one set of variables to another
+    # In our case we use it when we want to copy the parameters of DQN to Target_network
+    # Thanks to Arthur Juliani https://github.com/awjuliani
+
+    from_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "DQNetwork")
+    to_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "TargetNetwork")
+    op_holder = []
+
+    for from_var, to_var in zip(from_vars, to_vars):
+        op_holder.append(to_var.assign(from_var))
+
+    return op_holder
+
 
 def training(map, vehicle, sensors):
     
     
     tf.reset_default_graph()
     agent = DQNetwork(state_size, action_size, learning_rate, name="Agent")
+    target_agent = DQNetwork(state_size, action_size, learning_rate, name="Target")
     print("NN init")
     writer = tf.summary.FileWriter("summary")
     tf.summary.scalar("Loss", agent.loss)
     write_op = tf.summary.merge_all()
+    dqn_scores = []
+    eps_loss = []
+    
+    saver = tf.train.Saver()
+
     
     #init memory 
-    memory = Memory(max_size = memory_size)
     print("memory init")
+
+    memory = Memory(max_size = memory_size, pretrain_length = pretrain_length, action_space = action_space)
+    memory.fill_memory(map, vehicle, sensors.camera_queue, sensors, autopilot=True)
+    memory.save_memory(memory_save_path, memory)
     
     with tf.Session() as sess:
         print("session beginning")
@@ -1015,14 +1136,19 @@ def training(map, vehicle, sensors):
 
                 #q-val for all next states to compute target q-val for current state
                 Qs_next_state = sess.run(agent.output, feed_dict={agent.inputs_: next_s_mb})
+                Qs_target_next_state = sess.run(target_agent.output, feed_dict={target_agent.inputs_: next_s_mb})
                 
                 for i in range(0, len(batch)):
                     terminal = dones_mb[i] #check if on last state of eps
+                    action = np.argmax(Qs_next_state[i]) #store index of optimal action
                     if terminal:
                         target_Qs_batch.append((r_mb[i])) #if last state, append reward
                     else:
                         #formulate target q-vals by feed-fwd in network, using old weights for comparison 
-                        target = r_mb[i] + gamma*np.max(Qs_next_state[i])
+                        #choose optimal action & compute q-val via target net rather than use argmax & same net here
+                        #reduces overestimation
+                        target = r_mb[i] + gamma*Qs_target_next_state[i][action]
+                        #target = r_mb[i] + gamma*np.max(Qs_next_state[i])
                         target_Qs_batch.append(target)
                 targets_mb = np.array([each for each in target_Qs_batch])
                 
@@ -1033,6 +1159,14 @@ def training(map, vehicle, sensors):
                 writer.add_summary(summary, episode)
                 writer.flush
                 
+                #Newly added 
+                if tau > max_tau: #update target net weights every 5000 steps/actions 
+                    update_target = update_target_graph()
+                    sess.run(update_target)
+                    m += 1
+                    tau = 0
+                    print("model updated")
+                
                 if episode % 5 == 0:
                     save_path = saver.save(sess, "./models/model.ckpt")
                     print("Model Saved")
@@ -1042,15 +1176,60 @@ def training(map, vehicle, sensors):
                                   'Explore P: {:.4f}'.format(explore_probability),
                                 'Training Loss {:.4f}'.format(loss))
                 
+                if sensors.collision_flag == True:
+                    break
+                
+            eps_loss.append(loss)
+            dqn_scores.append(episode_reward)
+        print("Loss per episode")
+        print(eps_loss)
+        print("Reward per episode")
+        print(dqn_scores)
+        
+        filename = 'carla-dqn.png'
+        x = [i + 1 for i in range(total_episodes)]
+        print("plotting episodes")
+        
+        
+        fig=plt.figure()
+        ax=fig.add_subplot(111, label="1")
+        ax2=fig.add_subplot(111, label="2", frame_on=False)
+    
+        ax.plot(x, eps_loss, color="C0")
+        ax.set_xlabel("Game", color="C0")
+        ax.set_ylabel("Loss", color="C0")
+        ax.tick_params(axis='x', colors="C0")
+        ax.tick_params(axis='y', colors="C0")
+    
+        N = len(dqn_scores)
+        running_avg = np.empty(N)
+        for t in range(N):
+    	    running_avg[t] = np.mean(dqn_scores[max(0, t-20):(t+1)])
+    
+        ax2.scatter(x, running_avg, color="C1")
+        #ax2.xaxis.tick_top()
+        ax2.axes.get_xaxis().set_visible(False)
+        ax2.yaxis.tick_right()
+        #ax2.set_xlabel('x label 2', color="C1")
+        ax2.set_ylabel('Score', color="C1")
+        #ax2.xaxis.set_label_position('top')
+        ax2.yaxis.set_label_position('right')
+        #ax2.tick_params(axis='x', colors="C1")
+        ax2.tick_params(axis='y', colors="C1")
+        
+        plt.draw()
+        print("saving plot")
+        plt.savefig(filename)    
+
                 
 def testing(map, vehicle, sensors):
     tf.reset_default_graph()
     with tf.Session() as sess:
 
-        saver.restore(sess, "./models/model.ckpt")
+        #saver.restore(sess, "./models/model.ckpt")
 
-        if saver is None:
-            print("did not load")
+        #if saver is None:
+            #print("did not load")
 
         graph = tf.get_default_graph()
         inputs_ = graph.get_tensor_by_name("DQNetwork" + "/inputs:0")
@@ -1079,6 +1258,7 @@ def testing(map, vehicle, sensors):
 
             else:
                 time.sleep(0.25)
+                
                
                     
 def control_loop(vehicle_id, host, port):
@@ -1135,6 +1315,7 @@ def render_loop(args):
 
         if world is not None:
             world.destroy()
+        
 
         pygame.quit()
 
